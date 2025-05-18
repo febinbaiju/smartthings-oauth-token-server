@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  smartthings-token-server:
+    build: .
+    container_name: smartthings-0auth-token-server
+    ports:
+      - "5165:5165"
+    volumes:
+      - smartthings-0auth-token-data:/tmp
+    environment:
+      SMARTTHINGS_CLIENT_ID: "your_client_id"
+      SMARTTHINGS_CLIENT_SECRET: "your_client_secret"
+      REFRESH_TOKEN: "your_seed_refresh_token"
+    restart: unless-stopped
+
+volumes:
+  smartthings-0auth-token-data:
