@@ -10,6 +10,33 @@ import schedule
 import pytz
 from dotenv import load_dotenv
 
+
+def start_http_server(directory="/tmp", port=5165):
+    """
+    Start a simple HTTP server to serve token files.
+    Logs to console. Keeps running independently.
+    """
+    try:
+        subprocess.Popen(
+            ['python3', '-m', 'http.server', str(port), '--bind', '0.0.0.0', '--directory', directory],
+            start_new_session=True
+        )
+        print(f"✅ HTTP server started on port {port}, serving {directory}")
+    except Exception as e:
+        print(f"[ERROR] Failed to start HTTP server: {e}")
+        sys.exit(1)
+
+
+def write_token_file_atomic(filepath, data):
+    """
+    Atomically write the token file to avoid partial writes.
+    """
+    tmp_file = filepath + '.tmp'
+    with open(tmp_file, 'wt') as f:
+        f.write(data)
+    os.replace(tmp_file, filepath)
+
+
 def get_token(token_file_path, client_id, client_secret, seed_refresh_token):
     """
     Get a new access token using a refresh token, retrying indefinitely on failure every 5 seconds.
@@ -18,16 +45,17 @@ def get_token(token_file_path, client_id, client_secret, seed_refresh_token):
         with open(token_file_path, 'rt') as infile:
             refresh_token = json.loads(infile.read()).get('refresh_token')
             if not refresh_token:
-                raise FileNotFoundError
-    except FileNotFoundError:
+                raise ValueError("No refresh_token in token file")
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        print("⚠️  Using seed refresh token")
         refresh_token = seed_refresh_token
 
-    print(f"[CURRENT] refresh_token: {refresh_token}")
+    print(f"[CURRENT] refresh_token: {refresh_token[:10]}...")
 
     url = "https://api.smartthings.com/oauth/token"
     payload = (
-        f'grant_type=refresh_token&client_id={client_id}&client_secret='
-        f'{client_secret}&refresh_token={refresh_token}'
+        f'grant_type=refresh_token&client_id={client_id}&client_secret={client_secret}'
+        f'&refresh_token={refresh_token}'
     )
     headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -43,43 +71,37 @@ def get_token(token_file_path, client_id, client_secret, seed_refresh_token):
                 response_dict['issued_at'] = datetime.datetime.now(
                     pytz.UTC).isoformat(timespec="seconds").replace('+00:00', 'Z')
                 response_json = json.dumps(response_dict, indent=4)
-                print(f" [NEW] [{datetime.datetime.now()}] {response_json}")
+                print(f"[NEW TOKEN] [{datetime.datetime.now()}] Token updated.")
 
-                with open(token_file_path, 'wt') as outfile:
-                    outfile.write(response_json)
-                break  # exit loop on success
+                write_token_file_atomic(token_file_path, response_json)
+                break
             else:
                 print(f"[ERROR] {response.status_code}: {response.text}")
         except requests.exceptions.RequestException as e:
-            print(f"[EXCEPTION] Request failed: {e}")
+            print(f"[EXCEPTION] Token request failed: {e}")
 
-        print("Retrying in 5 seconds...")
+        print("🔁 Retrying in 5 seconds...")
         time.sleep(5)
 
 
 if __name__ == "__main__":
     load_dotenv()
+
     # Read environment variables
     oauth_client_id = os.getenv('SMARTTHINGS_CLIENT_ID')
     oauth_client_secret = os.getenv('SMARTTHINGS_CLIENT_SECRET')
     seed_oauth_refresh_token = os.getenv('REFRESH_TOKEN')
 
     if not all([oauth_client_id, oauth_client_secret, seed_oauth_refresh_token]):
-        sys.exit("Missing SMARTTHINGS_CLIENT_ID, SMARTTHINGS_CLIENT_SECRET, or REFRESH_TOKEN.")
+        sys.exit("❌ Missing SMARTTHINGS_CLIENT_ID, SMARTTHINGS_CLIENT_SECRET, or REFRESH_TOKEN.")
 
-    # Token file location (in container)
+    # Token file path
     oauth_token_file_path = '/tmp/token_info.json'
 
-    # Start HTTP server to serve the token file
-    subprocess.Popen(
-        ['python3', '-m', 'http.server', '--bind', '0.0.0.0', '--directory', '/tmp', '5165'],
-        start_new_session=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    print("STARTING HTTP SERVER ON PORT 5165")
+    # Start HTTP server
+    start_http_server(directory='/tmp', port=5165)
 
-    # Refresh every 960 minutes
+    # Schedule token refresh
     schedule.every(960).minutes.do(
         get_token,
         oauth_token_file_path,
@@ -88,11 +110,12 @@ if __name__ == "__main__":
         seed_oauth_refresh_token
     )
 
-    # Initial fetch
+    # Initial token fetch
     get_token(oauth_token_file_path, oauth_client_id, oauth_client_secret, seed_oauth_refresh_token)
 
-    print("STARTING TOKEN REFRESH SCHEDULER...")
+    print("🕒 Scheduler running...")
 
+    # Main loop
     while True:
         schedule.run_pending()
         time.sleep(1)

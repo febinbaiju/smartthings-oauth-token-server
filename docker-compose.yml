@@ -9,9 +9,9 @@ services:
     volumes:
       - smartthings-0auth-token-data:/tmp
     environment:
-      SMARTTHINGS_CLIENT_ID: "your_client_id"
-      SMARTTHINGS_CLIENT_SECRET: "your_client_secret"
-      REFRESH_TOKEN: "your_seed_refresh_token"
+      SMARTTHINGS_CLIENT_ID: "your_client_id_here"
+      SMARTTHINGS_CLIENT_SECRET: "your_client_secret_here"
+      REFRESH_TOKEN: "your_seed_refresh_token_here"
     restart: unless-stopped
 
 volumes:
