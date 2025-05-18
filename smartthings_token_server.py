@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 def get_token(token_file_path, client_id, client_secret, seed_refresh_token):
     """
-    Get a new access token using a refresh token.
+    Get a new access token using a refresh token, retrying indefinitely on failure every 5 seconds.
     """
     try:
         with open(token_file_path, 'rt') as infile:
@@ -27,26 +27,34 @@ def get_token(token_file_path, client_id, client_secret, seed_refresh_token):
     url = "https://api.smartthings.com/oauth/token"
     payload = (
         f'grant_type=refresh_token&client_id={client_id}&client_secret='
-        f'&refresh_token={refresh_token}'
+        f'{client_secret}&refresh_token={refresh_token}'
     )
     headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Authorization': f'Basic {base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()}',
     }
 
-    response = requests.post(url, headers=headers, data=payload, timeout=30)
+    while True:
+        try:
+            response = requests.post(url, headers=headers, data=payload, timeout=30)
 
-    if response.status_code == 200:
-        response_dict = response.json()
-        response_dict['issued_at'] = datetime.datetime.now(
-            pytz.UTC).isoformat(timespec="seconds").replace('+00:00', 'Z')
-        response_json = json.dumps(response_dict, indent=4)
-        print(f" [NEW] [{datetime.datetime.now()}] {response_json}")
+            if response.status_code == 200:
+                response_dict = response.json()
+                response_dict['issued_at'] = datetime.datetime.now(
+                    pytz.UTC).isoformat(timespec="seconds").replace('+00:00', 'Z')
+                response_json = json.dumps(response_dict, indent=4)
+                print(f" [NEW] [{datetime.datetime.now()}] {response_json}")
 
-        with open(token_file_path, 'wt') as outfile:
-            outfile.write(response_json)
-    else:
-        sys.exit(f"[ERROR] {response.status_code} {response.text}")
+                with open(token_file_path, 'wt') as outfile:
+                    outfile.write(response_json)
+                break  # exit loop on success
+            else:
+                print(f"[ERROR] {response.status_code}: {response.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"[EXCEPTION] Request failed: {e}")
+
+        print("Retrying in 5 seconds...")
+        time.sleep(5)
 
 
 if __name__ == "__main__":
